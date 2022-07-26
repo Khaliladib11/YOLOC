@@ -12,6 +12,7 @@ import torch
 from torch.utils import data
 import torchvision.transforms as transforms
 
+
 class BDD(data.Dataset):
 
     """
@@ -123,14 +124,23 @@ class BDD(data.Dataset):
 
     # method to get the drivable area mask
     def get_drivable_area_annotation(self, idx):
-        pass
+        assert -1 < idx < len(self.images), "index out of range."
+        image_name = self.__get_image_name(idx)
+
+        mask = Image.open(self.de_seg_path / Path(image_name+'.png')).convert('L')
+
+        return mask
 
     # method to get the lane mask
     def get_lane_annotation(self, idx):
-        pass
+        assert -1 < idx < len(self.images), "index out of range."
+        image_name = self.__get_image_name(idx)
 
+        mask = Image.open(self.ll_seg_path / Path(image_name+'.png')).convert('L')
 
-    def display_image(self, idx, boxes=False):
+        return mask
+
+    def display_image(self, idx, **kwargs):
         assert -1 < idx < len(self.images), "index out of range."
         image = self.get_image(idx)
         if boxes:
@@ -141,6 +151,15 @@ class BDD(data.Dataset):
                 box = annotations['boxes'][i]
                 rect = patches.Rectangle((box[0], box[1]), box[2], box[3], facecolor="none", edgecolor='r')
                 ax.add_patch(rect)
+
+        if de_seg:
+            de_mask = self.get_drivable_area_annotation(idx)
+            ax.imshow(de_mask, cmap='jet', alpha=0.5*(np.array(de_mask)>0)  )
+            print(de_mask)
+
+        if ll_seg:
+            ll_mask = self.get_lane_annotation(idx)
+            ax.imshow(ll_mask, cmap='jet', alpha=0.5 * (np.array(ll_mask) > 0))
 
         else:
             plt.imshow(image)
@@ -154,4 +173,45 @@ class BDD(data.Dataset):
         return len(self.images)
 
     def __getitem__(self, idx):
+        pass
+
+
+class bddDataset(data.Dataset):
+
+    def __init__(self, cfg, stage, relative_path='../', image_size=(640, 640), transform=None):
+
+        assert stage in ['train', 'test'], "Please stage must be: 'train' or  'test'."
+        self.cfg = cfg
+        self.transform = transform
+        img_root = Path(relative_path + self.cfg.DATASET.IMAGESROOT)
+        label_root = Path(relative_path + self.cfg.DATASET.LABELROOT)
+        mask_root = Path(relative_path + self.cfg.DATASET.MASKROOT)
+        lane_root  = Path(relative_path + self.cfg.DATASET.LANEROOT)
+
+        if stage == 'train':
+            self.stage = self.cfg.DATASET.TRAIN
+        elif stage == 'test':
+            self.stage = self.cfg.DATASET.TEST
+
+
+        self.img_root = img_root / self.stage
+        self.label_root = label_root / self.stage
+        self.mask_root = mask_root / self.stage
+        self.lane_root = lane_root / self.stage
+
+        # self.dataformat = self.cfg.DATASET.IMAGEFORMAT
+
+        self.images = list(self.img_root.glob(f'**/*.{self.cfg.DATASET.IMAGEFORMAT}'))
+
+        self.mask_list = self.mask_root.iterdir()
+
+
+    def _get_db(self):
+        pass
+
+
+    def __len__(self):
+        pass
+
+    def __getitem__(self, item):
         pass

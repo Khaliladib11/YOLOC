@@ -6,6 +6,7 @@ import matplotlib.patches as patches
 from pathlib import Path
 from PIL import Image
 import json
+from tqdm import tqdm
 
 
 import torch
@@ -178,11 +179,12 @@ class BDD(data.Dataset):
 
 class bddDataset(data.Dataset):
 
-    def __init__(self, cfg, stage, relative_path='../', image_size=(640, 640), transform=None):
+    def __init__(self, cfg, stage, objects_to_detect, relative_path='../', image_size=(640, 640), transform=None):
 
         assert stage in ['train', 'test'], "Please stage must be: 'train' or  'test'."
         self.cfg = cfg
         self.transform = transform
+        self.image_size = image_size
         img_root = Path(relative_path + self.cfg.DATASET.IMAGESROOT)
         label_root = Path(relative_path + self.cfg.DATASET.LABELROOT)
         mask_root = Path(relative_path + self.cfg.DATASET.MASKROOT)
@@ -193,6 +195,7 @@ class bddDataset(data.Dataset):
         elif stage == 'test':
             self.stage = self.cfg.DATASET.TEST
 
+        self.objects_to_detect = objects_to_detect
 
         self.img_root = img_root / self.stage
         self.label_root = label_root / self.stage
@@ -203,12 +206,121 @@ class bddDataset(data.Dataset):
 
         self.images = list(self.img_root.glob(f'**/*.{self.cfg.DATASET.IMAGEFORMAT}'))
 
+        self.cls_to_idx, self.idx_to_cls = self.__create_classes_dict()
+
+
+
         self.mask_list = self.mask_root.iterdir()
 
+        self.db = self.__get_db()
 
-    def _get_db(self):
-        pass
+    def __create_classes_dict(self):
+        cls_to_idx = {}
+        idx_to_cls = {}
+        idx = 0
+        for obj in self.objects_to_detect:
+            if self.objects_to_detect[idx] == "traffic light":
+                cls_to_idx['tl_green'] = idx
+                idx_to_cls[idx] = 'tl_green'
+                cls_to_idx['tl_red'] = idx + 1
+                idx_to_cls[idx + 1] = 'tl_red'
+                cls_to_idx['tl_yellow'] = idx + 1
+                idx_to_cls[idx + 1] = 'tl_yellow'
 
+            else:
+                cls_to_idx[self.objects_to_detect[idx]] = idx
+                idx_to_cls[idx] = self.objects_to_detect[idx]
+
+            idx += 1
+        return cls_to_idx, idx_to_cls
+
+
+    def __get_db(self):
+        """
+        Method to create the database for the Dataloader class
+        :return:
+        list of dictionaries,
+        each dictionarry has four elements: "Image Path, label, mask, lane"
+        """
+        print("Building the database")
+
+        db = []
+
+        for image in tqdm(self.images):
+            image_path = str(image)
+            #print(image_path)
+            label_path = image_path.replace(str(self.img_root), str(self.label_root)).replace('jpg', 'json')
+            mask_path = image_path.replace(str(self.img_root), str(self.mask_root)).replace('jpg', 'png')
+            lane_path = image_path.replace(str(self.img_root), str(self.label_root)).replace('jpg', 'png')
+
+            with open(label_path, 'r') as f:
+                annotation = json.load(f)
+
+            data = annotation['frames'][0]['objects']
+
+            data = self.__filter_data(data)
+
+            gt = np.zeros((len(data), 5))
+
+            for idx, obj in enumerate(data):
+                category = obj['category']
+                cls_id = self.cls_to_idx[category]
+
+                x1 = float(obj['box2d']['x1'])
+                y1 = float(obj['box2d']['y1'])
+                x2 = float(obj['box2d']['x2'])
+                y2 = float(obj['box2d']['y2'])
+
+                gt[idx][0] = cls_id
+
+                box = self.__convert_bbox(x1, x2, y1, y2)
+
+                gt[idx][1:] = list(box)
+
+
+            image_gt = {
+                'image_path': image_path,
+                'label': gt,
+                'mask': mask_path,
+                'lane': lane_path
+            }
+
+            db.append(image_gt)
+
+        return db
+
+
+    def __filter_data(self, data):
+        result = []
+        check_value = True
+        for obj in data:
+            if 'box2d' in obj.keys():
+                if obj['category'] in self.objects_to_detect:
+                    if obj['category'] == 'traffic light':
+                        #print(obj)
+                        #print()
+                        if obj['attributes']['trafficLightColor'] == 'none':
+                            check_value = False
+                        #print(obj['attributes']['trafficLightColor'])
+                        obj['category'] = 'tl_' + obj['attributes']['trafficLightColor']
+
+                    if check_value:
+                        result.append(obj)
+
+        return result
+
+    def __convert_bbox(self, x1, x2, y1, y2):
+        dw = 1. / (self.image_size[0])
+        dh = 1. / (self.image_size[1])
+        x = (x1 + x2) / 2.0
+        y = (y1 + y2) / 2.0
+        w = x2 - x1
+        h = y2 - y1
+        x = x * dw
+        w = w * dw
+        y = y * dh
+        h = h * dh
+        return (x, y, w, h)
 
     def __len__(self):
         pass

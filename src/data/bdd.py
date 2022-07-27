@@ -7,6 +7,7 @@ from pathlib import Path
 from PIL import Image
 import json
 from tqdm import tqdm
+from collections import deque
 
 
 import torch
@@ -179,7 +180,7 @@ class BDD(data.Dataset):
 
 class bddDataset(data.Dataset):
 
-    def __init__(self, cfg, stage, objects_to_detect, relative_path='../', image_size=(640, 640), transform=None):
+    def __init__(self, cfg, stage, objects_to_detect, db_path=None, relative_path='../', image_size=(640, 640), transform=None):
 
         assert stage in ['train', 'test'], "Please stage must be: 'train' or  'test'."
         self.cfg = cfg
@@ -212,7 +213,10 @@ class bddDataset(data.Dataset):
 
         self.mask_list = self.mask_root.iterdir()
 
-        self.db = self.__get_db()
+        if db_path:
+            self.db = self.load_db(db_path)
+        else:
+            self.db = self.__get_db()
 
     def __create_classes_dict(self):
         cls_to_idx = {}
@@ -244,7 +248,7 @@ class bddDataset(data.Dataset):
         """
         print("Building the database")
 
-        db = []
+        db = deque()
 
         for image in tqdm(self.images):
             image_path = str(image)
@@ -260,7 +264,8 @@ class bddDataset(data.Dataset):
 
             data = self.__filter_data(data)
 
-            gt = np.zeros((len(data), 5))
+            #gt = np.zeros((len(data), 5))
+            gt = []
 
             for idx, obj in enumerate(data):
                 category = obj['category']
@@ -271,15 +276,16 @@ class bddDataset(data.Dataset):
                 x2 = float(obj['box2d']['x2'])
                 y2 = float(obj['box2d']['y2'])
 
-                gt[idx][0] = cls_id
-
                 box = self.__convert_bbox(x1, x2, y1, y2)
 
-                gt[idx][1:] = list(box)
+                # gt[idx][0] = cls_id
+                #gt[idx][1:] = list(box)
+
+                gt.append([cls_id, box])
 
 
             image_gt = {
-                'image_path': image_path,
+                'image': image_path,
                 'label': gt,
                 'mask': mask_path,
                 'lane': lane_path
@@ -322,8 +328,25 @@ class bddDataset(data.Dataset):
         h = h * dh
         return (x, y, w, h)
 
+    def export_db(self, json_path):
+        if Path(json_path).suffix == '.json':
+            with open(json_path, 'w') as f:
+                json.dump(list(self.db), f, ensure_ascii=False)
+        else:
+            raise Exception(f"{json_path} must end with '.json' extention.")
+
+    def load_db(self, json_path):
+        if Path(json_path).is_file():
+            with open(json_path, 'r') as f:
+                db = json.load(f)
+
+        else:
+            raise Exception(f"{json_path} does not exist.")
+
+        return deque(db)
+
     def __len__(self):
-        pass
+        return len(self.images)
 
     def __getitem__(self, item):
-        pass
+        data = self.db[idx]
